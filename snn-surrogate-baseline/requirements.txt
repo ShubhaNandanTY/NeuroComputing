@@ -1,0 +1,14 @@
+# User-facing install requirements. See requirements.lock.txt for the
+# full resolved set (transitive deps and exact versions).
+#
+# PyTorch cu128 wheels are needed for NVIDIA Blackwell (RTX 5080, sm_120).
+# Install with:
+#   uv pip install --index-url https://download.pytorch.org/whl/cu128 \
+#       "torch==2.11.0" "torchvision==0.26.0"
+#   uv pip install "snntorch==1.0.0" matplotlib "nvidia-ml-py==13.610.43"
+
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+snntorch==1.0.0
+matplotlib==3.11.2
+nvidia-ml-py==13.610.43
