@@ -1,11 +1,17 @@
-# Data — keep raw/processed artifacts out of version control
-data/raw/*
-data/processed/*
-!data/**/.gitkeep
+# Data — keep raw/processed artifacts out of version control anywhere in the workspace
+**/data/raw/*
+**/data/processed/*
+!**/data/**/.gitkeep
+# snn-surrogate-baseline uses `data/` directly as the torchvision MNIST download dir
+snn-surrogate-baseline/data/
 
-# Results
-results/*
-!results/.gitkeep
+# Results / run outputs
+**/results/*
+!**/results/.gitkeep
+snn-surrogate-baseline/runs/
+
+# Local virtualenvs (per sub-project)
+**/.venv/
 
 # Python
 __pycache__/
