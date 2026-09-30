@@ -124,6 +124,33 @@ Nothing about the forward pass changes. We just tap Leaky₂'s output tensor —
 which snnTorch already exposes because `init_hidden=True` — and add one loss
 term.
 
+### 4.1 The kernel is feature-agnostic (why this design lasts into Neuron Games)
+
+Steps 1–3 above produce a **feature vector per example**: one row of `X`,
+shape `[B, D]`. Steps 4–5 (kernel matrix, off-diagonal reduction) only look
+at `X`. They do not care what `D` represents. In particular, `X` can be:
+
+- **Smoothed hidden spike trains** — what the pilot uses (steps 1–3 above).
+- **Per-neuron plasticity signatures `{e_ij}`** — what the proposal's §5 calls
+  the eventual feature. Each row of `X` would then be a neuron's incoming
+  eligibility-trace vector rather than an example's spike trace.
+- **Anything else with a meaningful notion of "two of these should differ"** —
+  hidden membrane trajectories, per-synapse update magnitudes, etc.
+
+Swapping the feature does not require changing the kernel module or the
+diversity loss. It only requires a different feature-extractor upstream.
+That's why Phase B1 (below) builds the kernel module as feature-agnostic,
+even though the pilot only exercises the spike-train pathway.
+
+**Explicit deferral of plasticity signatures.** Surrogate-gradient BP does
+not natively compute eligibility traces `{e_ij}` — those are a three-factor
+learning rule construct. Rather than fake them with a hand-rolled trace
+approximation (which introduces its own hyperparameters and is a real change
+to `train.py`), we defer plasticity-signature diversity to the Neuron Games
+learning-rule work. When that lands, only the feature extractor changes; the
+kernel module, the loss, and the reporting shape from this PR carry over
+unchanged.
+
 ## 5. Related work — what others do with diversity in SNNs
 
 Compact per-paper descriptions. This is a thinner literature than the energy
@@ -224,22 +251,57 @@ Confirm PR #1's window split (Phase A1) has landed on `main`, or coordinate
 so this branch rebases on it before pilot experiments run. Diversity overhead
 is meaningless without the `train_only` window separated from `validation`.
 
-### Phase B1 — spike-train kernel module
+### Phase B1 — pluggable kernel module
 
 **Files:** new `neuron_baseline/kernels.py`, `tests/test_kernels.py`.
 
-- Implement `mci_kernel_matrix(spikes, smoothing="exp", tau=5)`:
-  input `[B, T, D]` spike tensor, output `[B, B]` kernel matrix.
-- Smoothing: causal exponential window over T. Fixed hyperparameter.
-- Numeric sanity tests:
-  - `K` is symmetric and PSD (all eigenvalues ≥ −tol).
-  - `K[i,i] > 0` and equals the smoothed-spike-train energy of example i.
-  - Two spike trains with identical spike times give a `K[i,j]` close to
-    `K[i,i]`.
-  - Two orthogonal spike trains (e.g. non-overlapping spike times, plus
-    negligible smoothing overlap) give `K[i,j] ≈ 0`.
-  - Differentiability: gradient flows to input spikes via `.backward()`.
-- No integration with training yet. This phase ships a tested, isolated module.
+Build a small kernel library behind a common interface:
+`kernel_matrix(features, kind, **params)`. Input `[B, D]` feature tensor,
+output `[B, B]` kernel matrix. **Feature-agnostic** (§4.1): the module does
+not know whether the features are smoothed spike trains, eligibility
+vectors, or anything else — that's the caller's problem.
+
+Implement five kernels behind the same interface:
+
+- **`count`** — feature is a scalar spike count per example; `K[i,j] = n_i · n_j`.
+  Timing-blind rate baseline. Cheapest possible sanity check.
+- **`binned`** — feature is a per-bin spike-count vector; `K[i,j] = r_i · r_j`.
+  Coarse-timing baseline.
+- **`mci`** — memoryless cross-intensity. Feature is a smoothed spike train
+  (default: exponential window, τ = 5 steps); `K[i,j] = ⟨f_i, f_j⟩`.
+  The workhorse. What the pilot uses.
+- **`vanrossum`** — mCI restricted to a decaying-exponential smoothing
+  window. Free once mCI exists (one config change). Commonly cited as its
+  own kernel in the neuroscience literature.
+- **`schoenberg`** — mCI-derived distance wrapped in a Gaussian:
+  `K[i,j] = exp(-‖f_i - f_j‖² / 2σ²)`. Universal kernel (dense in
+  continuous functions), one nonlinearity on top of mCI.
+
+Sanity tests apply uniformly to all five:
+
+- Symmetric: `K[i,j] == K[j,i]`.
+- PSD: eigenvalues of `K` ≥ −tolerance (numerical fuzz allowed).
+- `K[i,i] > 0` for non-empty inputs.
+- Two identical feature vectors → `K[i,j]` close to `K[i,i]`.
+- Two orthogonal feature vectors → `K[i,j] ≈ 0` for linear kernels,
+  or `≈ exp(-‖f_i‖²/σ²)` for Schoenberg.
+- Differentiability: gradient flows to `features` via `.backward()`.
+
+**Out of scope for this phase (deferred as future work):**
+
+- Higher-order / spike-timing-correlation kernels — bigger implementation,
+  meaningful theoretical addition, worth doing when the pilot motivates it.
+- Victor–Purpura distance — not positive-definite, cannot serve as a loss
+  term. Included in the plan only as reference.
+
+Why implement five now rather than only mCI: the incremental cost is small
+(the four non-workhorse kernels are ≤ 10 lines each behind the shared
+interface), and the Neuron Games work (§5 in the proposal) will want to
+swap between them anyway. Building the pluggable module once, in this PR,
+means later work is a config change, not a refactor.
+
+No training integration in this phase. This phase ships a tested, isolated
+module and nothing else.
 
 ### Phase B2 — diversity loss + wiring into `train.py`
 
@@ -340,6 +402,28 @@ spike_stats: {
    cost is 128² = 16k dot products per batch — trivial.
 4. **Loss form:** default pairwise (option a). Promote to DPP log-det
    (option b) only if pairwise shows movement.
+5. **Kernel choice for the pilot run** *(among the five Phase B1 implements)*:
+   default `mci`. `count` and `binned` are useful baselines to check whether
+   any timing-aware kernel matters at all; `vanrossum` and `schoenberg` are
+   worth revisiting if `mci` shows partial movement.
+6. **K over what?** — the pilot uses **batch-wise K** (rows of `X` are
+   per-example features; K is `[B, B]`, encourages examples to produce
+   different patterns). The proposal's §5 phrasing ("Σ_ℓ log det(K_ℓ + εI)"
+   summed over layers) points at **neuron-wise K** (rows of `X` are
+   per-neuron features across the batch; K is `[N_ℓ, N_ℓ]`, encourages
+   neurons within a layer to specialize). Both are valid, both use the same
+   kernel machinery. Neuron-wise is closer to representational
+   specialization; batch-wise is closer to decorrelation. Open decision;
+   flagged for review before Phase B2 wiring.
+
+## 11.1 Resolved (feature choice)
+
+- **Feature vector for the pilot:** smoothed per-example hidden spike
+  trains (from Leaky₂). See §4.1.
+- **Plasticity signatures `{e_ij}`:** deferred to the Neuron Games
+  learning-rule work. Requires eligibility traces that surrogate-BP does
+  not natively compute; not faked with a hand-rolled approximation.
+  When Neuron Games lands, only the feature extractor changes.
 
 ## 12. Dependencies on PR #1
 
