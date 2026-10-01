@@ -110,19 +110,28 @@ Why the second hidden layer:
   layers reasonably.
 - Standard choice for representation-level regularizers.
 
-**What we compute per batch:**
+**What we compute per batch (neuron-wise formulation, proposal-aligned):**
 
 1. Get Leaky₂ spikes: shape `[T, B, C, H, W]` after conv/pool.
-2. Flatten to per-example vectors: shape `[B, T · C · H · W]`.
-3. Smooth over time (the T dim): convolve with a fixed 5-step exponential
-   window. This is what turns discrete spikes into the smooth traces the mCI
-   kernel expects.
-4. Compute pairwise similarities: `K = X @ X.T`, shape `[B, B]`.
-5. Reduce to a scalar via option (a) above.
+2. Permute to put neurons first: `[C, H, W, B, T] → [N, B, T]` with
+   `N = C · H · W = 1024` neurons.
+3. Smooth each neuron's time series: `smooth_exp(x, tau=5, axis=-1)` — a
+   causal exponential window, applied independently per (neuron, example).
+4. Flatten the per-neuron feature: `[N, B · T]`. Each row is one neuron's
+   smoothed response concatenated across the batch.
+5. Compute pairwise similarities between neurons: `K = X @ X.T`, shape
+   `[N, N] = [1024, 1024]`.
+6. Reduce to a scalar via option (a) above (average off-diagonal of `K`).
+
+**Why neuron-wise.** The neuron-games proposal (§5) defines diversity as
+`Σ_ℓ log det(K_ℓ + εI)` summed over layers, with the "feature object" being
+each neuron (eventually: each neuron's plasticity signature). That makes the
+rows of `K` neurons, not examples. See §11.1 for the resolution of this
+decision.
 
 Nothing about the forward pass changes. We just tap Leaky₂'s output tensor —
-which snnTorch already exposes because `init_hidden=True` — and add one loss
-term.
+which snnTorch already exposes because `init_hidden=True` — permute it, and
+add one loss term.
 
 ### 4.1 The kernel is feature-agnostic (why this design lasts into Neuron Games)
 
@@ -406,20 +415,18 @@ spike_stats: {
    default `mci`. `count` and `binned` are useful baselines to check whether
    any timing-aware kernel matters at all; `vanrossum` and `schoenberg` are
    worth revisiting if `mci` shows partial movement.
-6. **K over what?** — the pilot uses **batch-wise K** (rows of `X` are
-   per-example features; K is `[B, B]`, encourages examples to produce
-   different patterns). The proposal's §5 phrasing ("Σ_ℓ log det(K_ℓ + εI)"
-   summed over layers) points at **neuron-wise K** (rows of `X` are
-   per-neuron features across the batch; K is `[N_ℓ, N_ℓ]`, encourages
-   neurons within a layer to specialize). Both are valid, both use the same
-   kernel machinery. Neuron-wise is closer to representational
-   specialization; batch-wise is closer to decorrelation. Open decision;
-   flagged for review before Phase B2 wiring.
+## 11.1 Resolved
 
-## 11.1 Resolved (feature choice)
-
-- **Feature vector for the pilot:** smoothed per-example hidden spike
-  trains (from Leaky₂). See §4.1.
+- **K axis — neuron-wise.** Rows of `X` are per-neuron features across the
+  batch; `K` is `[N_ℓ, N_ℓ]`, encourages neurons within a layer to
+  specialize on different inputs. Matches the proposal's §5 phrasing
+  (`Σ_ℓ log det(K_ℓ + εI)`, feature object = neuron). The alternative
+  (batch-wise K, `[B, B]`, from Cogswell-style decorrelation) is a
+  different diversity notion from standard ML and is not part of the pilot.
+  Reversing this later is cheap because the kernel module is
+  feature-agnostic (§4.1).
+- **Feature vector for the pilot:** smoothed per-neuron hidden spike
+  responses (from Leaky₂). See §4.
 - **Plasticity signatures `{e_ij}`:** deferred to the Neuron Games
   learning-rule work. Requires eligibility traces that surrogate-BP does
   not natively compute; not faked with a hand-rolled approximation.
