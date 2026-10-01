@@ -29,7 +29,7 @@ def evaluate(net: nn.Sequential, loader, num_steps: int, device: torch.device,
         data = data.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
         bs = targets.numel()
-        spk_rec, _ = forward_pass(net, num_steps, data)
+        spk_rec, _, _ = forward_pass(net, num_steps, data)
         # spk_rec: [T, B, C]. Matches SF.accuracy_rate: sum spikes over T, argmax.
         pred = spk_rec.sum(dim=0).argmax(dim=1)
         total_correct += int((pred == targets).sum().item())

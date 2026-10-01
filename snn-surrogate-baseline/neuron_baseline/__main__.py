@@ -53,6 +53,16 @@ def _add_config_overrides(p: argparse.ArgumentParser) -> None:
     p.add_argument("--run-dir", dest="run_dir")
     p.add_argument("--device")
     p.add_argument("--num-workers", dest="num_workers", type=int)
+    # Diversity regularization (Phase B2)
+    p.add_argument("--diversity-lambda", dest="diversity_lambda", type=float,
+                   help="weight on L_div (0 disables diversity entirely)")
+    p.add_argument("--diversity-kernel", dest="diversity_kernel",
+                   choices=["count", "binned", "mci", "vanrossum", "schoenberg"],
+                   help="kernel used for the diversity term")
+    p.add_argument("--diversity-tau", dest="diversity_tau", type=float,
+                   help="smoothing time constant (mci/vanrossum/schoenberg)")
+    p.add_argument("--diversity-sigma", dest="diversity_sigma", type=float,
+                   help="Gaussian bandwidth (schoenberg only)")
 
 
 def cmd_train(args: argparse.Namespace) -> int:

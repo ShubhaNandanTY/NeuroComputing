@@ -54,22 +54,50 @@ def build_net(
     return net
 
 
-def forward_pass(net: nn.Sequential, num_steps: int, data: torch.Tensor
-                 ) -> tuple[torch.Tensor, torch.Tensor]:
+def forward_pass(net: nn.Sequential, num_steps: int, data: torch.Tensor,
+                 tap_module_idx: int | None = None
+                 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Run the network for `num_steps` steps on the same static input.
 
     Returns:
         spk_rec: [T, B, num_classes]
         mem_rec: [T, B, num_classes]
+        hidden_rec: [T, B, ...] from the module at `tap_module_idx` in `net`,
+            or None if `tap_module_idx` is None. Used by the diversity
+            regularizer (Phase B2) to compute a neuron-wise kernel matrix.
 
     Resets neuron hidden state ONCE at the start (between batches), then
-    carries state across the T loop.
+    carries state across the T loop. The forward hook is registered only
+    when `tap_module_idx` is not None, so lambda=0 training pays no cost
+    for the diversity path.
     """
     spk_rec: list[torch.Tensor] = []
     mem_rec: list[torch.Tensor] = []
-    utils.reset(net)
-    for _ in range(num_steps):
-        spk_out, mem_out = net(data)
-        spk_rec.append(spk_out)
-        mem_rec.append(mem_out)
-    return torch.stack(spk_rec), torch.stack(mem_rec)
+    hidden_rec: list[torch.Tensor] | None = None
+
+    hook_handle = None
+    captured: list[torch.Tensor] = []
+    if tap_module_idx is not None:
+        hidden_rec = []
+
+        def _hook(_mod, _inp, out):
+            captured.append(out)
+
+        hook_handle = net[tap_module_idx].register_forward_hook(_hook)
+
+    try:
+        utils.reset(net)
+        for _ in range(num_steps):
+            if hidden_rec is not None:
+                captured.clear()
+            spk_out, mem_out = net(data)
+            spk_rec.append(spk_out)
+            mem_rec.append(mem_out)
+            if hidden_rec is not None:
+                hidden_rec.append(captured[0])
+    finally:
+        if hook_handle is not None:
+            hook_handle.remove()
+
+    hidden_tensor = torch.stack(hidden_rec) if hidden_rec is not None else None
+    return torch.stack(spk_rec), torch.stack(mem_rec), hidden_tensor

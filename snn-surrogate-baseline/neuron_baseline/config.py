@@ -45,6 +45,17 @@ class Config:
     inference_min_batches: int = 20  # for the energy-per-image measurement window
     warmup_batches: int = 2          # measurement warm-up
 
+    # --- Diversity regularization (Phase B2) ---
+    # When diversity_lambda > 0, training adds +lambda * L_div to the CE loss,
+    # where L_div is the mean off-diagonal of a neuron-wise kernel matrix K
+    # computed from the hidden Leaky layer's spike output. lambda = 0 disables
+    # the hook and the kernel computation entirely (guaranteed zero overhead).
+    diversity_lambda: float = 0.0
+    diversity_kernel: str = "mci"            # count | binned | mci | vanrossum | schoenberg
+    diversity_tau: float = 5.0               # smoothing time constant (mci / vanrossum / schoenberg)
+    diversity_sigma: float = 1.0             # Gaussian bandwidth (schoenberg only)
+    diversity_layer_idx: int = 5             # index into nn.Sequential: 5 = Leaky_2
+
     # --- Software / hardware fingerprint (filled at run time, not by the user) ---
     fingerprint: dict[str, Any] = field(default_factory=dict)
 
