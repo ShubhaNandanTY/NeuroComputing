@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import asdict, fields
+from dataclasses import fields
 from pathlib import Path
 
 from .config import Config
@@ -53,118 +53,29 @@ def _add_config_overrides(p: argparse.ArgumentParser) -> None:
     p.add_argument("--run-dir", dest="run_dir")
     p.add_argument("--device")
     p.add_argument("--num-workers", dest="num_workers", type=int)
+    # Diversity regularization (Phase B2)
+    p.add_argument("--diversity-lambda", dest="diversity_lambda", type=float,
+                   help="weight on L_div (0 disables diversity entirely)")
+    p.add_argument("--diversity-kernel", dest="diversity_kernel",
+                   choices=["count", "binned", "mci", "vanrossum", "schoenberg"],
+                   help="kernel used for the diversity term")
+    p.add_argument("--diversity-tau", dest="diversity_tau", type=float,
+                   help="smoothing time constant (mci/vanrossum/schoenberg)")
+    p.add_argument("--diversity-sigma", dest="diversity_sigma", type=float,
+                   help="Gaussian bandwidth (schoenberg only)")
 
 
 def cmd_train(args: argparse.Namespace) -> int:
-    import torch
-    from .reproducibility import seed_everything, fingerprint
-    from .data import build_loaders
-    from .train import train
-    from .eval import evaluate
-    from .energy import EnergyMeter
-    from .plots import save_training_plots
+    from .runner import run_training
 
     cfg = _apply_overrides(Config(), args)
     if not cfg.run_dir:
         cfg.run_dir = str(Path("runs") / _now_stamp())
-    run_dir = Path(cfg.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    seed_everything(cfg.seed)
-    cfg.fingerprint = fingerprint()
-
-    device = torch.device(cfg.device)
-    if cfg.device.startswith("cuda") and not torch.cuda.is_available():
-        print("FATAL: CUDA requested but unavailable. Refusing to fall back to CPU.",
-              file=sys.stderr)
+    try:
+        run_training(cfg, run_dir=Path(cfg.run_dir), verbose=True)
+    except RuntimeError as e:
+        print(f"FATAL: {e}", file=sys.stderr)
         return 3
-
-    print(f"[cfg] run_dir={run_dir}")
-    print(f"[cfg] {cfg.fingerprint.get('device_name', '(cpu)')}, "
-          f"torch={cfg.fingerprint.get('torch')}, "
-          f"snntorch={cfg.fingerprint.get('snntorch')}")
-    cfg.save(run_dir / "config.json")
-
-    loaders = build_loaders(
-        cfg.data_dir, cfg.batch_size, cfg.eval_batch_size,
-        cfg.val_size, cfg.seed, num_workers=cfg.num_workers,
-        pin_memory=cfg.device.startswith("cuda"),
-    )
-    print(f"[data] train_batches={len(loaders['train'])} "
-          f"val_examples={len(loaders['val'].dataset)} "
-          f"test_examples={len(loaders['test'].dataset)}")
-
-    meter = EnergyMeter(device_index=0, sample_hz=cfg.energy_sample_hz)
-    print(f"[energy] nvml_available={meter.available} "
-          f"cumulative_energy={meter.has_cumulative} "
-          f"device='{meter.device_name}' notes={meter._init_notes!r}")
-
-    with meter.measure("train"):
-        t0 = time.perf_counter()
-        out = train(cfg, loaders, device, run_dir)
-        train_wall_s = time.perf_counter() - t0
-    train_energy = meter.result
-
-    # Reload best.pt and evaluate on the reserved test set.
-    best_path = run_dir / "checkpoints" / "best.pt"
-    ckpt = torch.load(str(best_path), map_location=device, weights_only=False)
-    from .model import build_net
-    eval_net = build_net(
-        beta=cfg.beta, surrogate_slope=cfg.surrogate_slope,
-        threshold=cfg.threshold, reset_mechanism=cfg.reset_mechanism,
-    ).to(device)
-    eval_net.load_state_dict(ckpt["model_state"])
-
-    # Warm up before measuring inference energy
-    for _ in range(cfg.warmup_batches):
-        for data, targets in loaders["val"]:
-            data = data.to(device, non_blocking=True)
-            from .model import forward_pass
-            with torch.no_grad():
-                forward_pass(eval_net, cfg.num_steps, data)
-            break
-
-    with meter.measure("inference"):
-        t0 = time.perf_counter()
-        test_metrics = evaluate(eval_net, loaders["test"], cfg.num_steps, device)
-        infer_wall_s = time.perf_counter() - t0
-    infer_energy = meter.result
-
-    meter.shutdown()
-
-    energy_per_image_j = None
-    if infer_energy is not None and infer_energy.energy_j is not None and test_metrics["n"]:
-        energy_per_image_j = infer_energy.energy_j / test_metrics["n"]
-
-    results = {
-        "history": out["history"],
-        "best_val_accuracy": out["best_val_acc"],
-        "test": test_metrics,
-        "wall_time_s": {"train": train_wall_s, "inference": infer_wall_s},
-        "energy": {
-            "train": train_energy.to_dict() if train_energy else None,
-            "inference": infer_energy.to_dict() if infer_energy else None,
-            "inference_per_image_j": energy_per_image_j,
-            "measurement_notes": (
-                "GPU-only NVML reading (RTX 5080 device power); "
-                "does not include CPU / RAM / system PSU. "
-                "torch.cuda.synchronize() at every measurement boundary. "
-                "Validation eval is inside the training window (not separated). "
-                "Warm-up: forward-only passes on val loader before inference measurement. "
-                "Any competing GUI/GPU workloads on this desktop show up in the reading."
-            ),
-        },
-    }
-    (run_dir / "results.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
-    save_training_plots(out["history"], run_dir / "plots")
-
-    print()
-    print(f"[done] test_accuracy={test_metrics['accuracy']:.4f} on n={test_metrics['n']} examples")
-    print(f"[done] wall: train={train_wall_s:.1f}s  inference={infer_wall_s:.1f}s")
-    print(f"[done] energy: train={train_energy.energy_j}J  "
-          f"inference={infer_energy.energy_j}J  "
-          f"per_image={energy_per_image_j}J")
-    print(f"[done] artifacts under: {run_dir.resolve()}")
     return 0
 
 

@@ -55,7 +55,7 @@ All commands run from `snn-surrogate-baseline/` with the venv Python.
 | One-epoch baseline (default cfg) | `.venv/Scripts/python.exe -m neuron_baseline train` |
 | Longer run w/ overrides | `.venv/Scripts/python.exe -m neuron_baseline train --epochs 5 --seed 42` |
 | Evaluate a saved checkpoint on the test set | `.venv/Scripts/python.exe -m neuron_baseline eval --ckpt runs/<TS>/checkpoints/best.pt` |
-| Walkthrough notebook | `.venv/Scripts/jupyter lab notebooks/baseline_walkthrough.ipynb` |
+| Notebook end-to-end run (same code path as the CLI) | `.venv/Scripts/jupyter lab notebooks/baseline_walkthrough.ipynb` |
 
 Each `train` invocation writes to `runs/<timestamp>/` with:
 
@@ -206,6 +206,7 @@ snn-surrogate-baseline/
 │   ├── model.py               # tutorial architecture + forward_pass(T)
 │   ├── train.py               # training loop + checkpoint save
 │   ├── eval.py                # full-set evaluation, variable batch size
+│   ├── runner.py              # end-to-end runner shared by CLI and notebook
 │   ├── plots.py               # loss/accuracy figures
 │   ├── energy.py              # NVML cumulative + power-sampling fallback
 │   └── reproducibility.py     # seeding + software/hardware fingerprint
@@ -214,7 +215,7 @@ snn-surrogate-baseline/
 ├── scripts/
 │   └── gpu_check.py           # standalone GPU sanity check
 ├── notebooks/
-│   └── baseline_walkthrough.ipynb   # thin walkthrough; modules are the truth
+│   └── baseline_walkthrough.ipynb   # calls runner.run_training(cfg) — full path
 ├── data/                      # MNIST (git-ignored)
 └── runs/                      # per-run outputs (git-ignored)
 ```
