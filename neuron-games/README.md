@@ -116,17 +116,57 @@ the diversity and homeostasis mechanisms above. Note the site is http-only.
 | `data/raw/` | Immutable inputs — never edited in place |
 | `data/processed/` | Derived datasets produced by code in `src/` |
 | `notebooks/` | Exploratory analysis |
-| `src/` | Reusable code (Neuron Games framework — TBD) |
+| `src/neuron_games/` | Neuron Games framework (see below) |
+| `tests/` | pytest unit tests |
+| `runs/` | Per-run outputs (git-ignored) |
 | `results/` | Figures, tables, model outputs |
 
 ## Setup
 
-_TODO — the full Neuron Games framework requires first-class support for custom
-per-synapse eligibility traces. snnTorch was picked as the starting substrate;
-the BP-reference sub-project (`../snn-surrogate-baseline/`) validates the stack._
+No separate environment: use the `snn-surrogate-baseline` venv (or any Python
+with torch, torchvision, matplotlib, pytest). `neuron_games` imports the
+baseline's data loaders, NVML energy meter, seeding and plots from
+`../snn-surrogate-baseline/neuron_baseline/` (see `src/neuron_games/_baseline.py`),
+so both sub-projects are measured by the same machinery. snnTorch itself is only
+needed for the two cross-check tests, which skip without it.
+
+All commands run from `neuron-games/`:
+
+| Purpose | Command |
+| --- | --- |
+| Unit tests | `python -m pytest tests -v` |
+| Row 2 (BP anchor), 1 epoch | `PYTHONPATH=src python -m neuron_games train --condition bp_anchor` |
+| Overrides | `PYTHONPATH=src python -m neuron_games train --epochs 5 --seed 42 --device cpu` |
+| Evaluate a checkpoint | `PYTHONPATH=src python -m neuron_games eval --ckpt runs/bp_anchor/<ts>/checkpoints/best.pt` |
+
+`--device` defaults to `cuda` and never silently falls back; pass `cpu` or `mps`
+explicitly elsewhere. Each run writes `runs/<condition>/<ts>/` with
+`config.json`, `results.json` (with a `meta` block naming the ablation row),
+`checkpoints/{best,last}.pt`, and `plots/`.
+
+### What exists (implementation-plan step 1)
+
+- **Model** (`model.py`): 784-128-10 fully-connected LIF network with a vendored
+  LIF cell (subtract reset, detached reset gradient, fast-sigmoid surrogate,
+  k = 25). Verified step-for-step identical to snnTorch `Leaky`
+  (`tests/test_model.py::test_matches_snntorch_leaky`). The cell exposes
+  `u`, `s`, and `fast_sigmoid_grad` explicitly so the three-factor rule
+  (Workstream A) can reuse it, and Row 2 and Row 4 train the same model.
+- **Row 2 — `bp_anchor`**: surrogate-gradient BPTT, Adam (lr 1e-3), T = 25,
+  Bernoulli rate coding, no bias terms (every parameter is a synapse `w_ij`).
+- **Task loss** (`potential/task.py`): `ce_rate` by default (mean over t of
+  CE on `spk[t]`, identical to `SF.ce_rate_loss`) because it gives the per-step
+  learning signal e-prop broadcasts; `ce_count` (plan §2.1's original default)
+  is selectable with `--task-loss ce_count`.
+
+Not yet: eligibility traces, three-factor rule (Row 4), V / E / R terms,
+modulators. Those follow implementation-plan Workstreams A–D.
 
 ## Log
 
 - 2026-09-07 — Repo initialized; proposal read and summarized; background research started.
 - 2026-09-23 — Repo split into workspace-of-projects layout; this content moved from
   the repo root into `neuron-games/`. See top-level [README](../README.md).
+- 2026-10-08 — `src/neuron_games/`: vendored LIF cell, 784-128-10 FC SNN, and the
+  Row 2 BPTT anchor on that architecture (the existing baseline is a Conv-SNN,
+  so Row 2 vs Row 4 needs its own FC anchor).
