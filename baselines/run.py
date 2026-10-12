@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", choices=MODELS, required=True)
     p.add_argument("--seed", type=int, default=20260923)  # snn-surrogate-baseline default
     p.add_argument("--epochs", type=int, default=25)      # N_BP in the energy plan
-    p.add_argument("--lr", type=float, default=1e-3)      # TODO(rich): confirm vs Deyvik's 1e-2
+    p.add_argument("--lr", type=float, default=1e-3)      # Adam default; Deyvik's 1e-2 was tuned for SNNs, not CNNs
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--eval-batch-size", type=int, default=256)
     p.add_argument("--val-size", type=int, default=5000)
