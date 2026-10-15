@@ -12,6 +12,17 @@ Runs (3 epochs each, three_factor base, spike feature unless noted):
 
 Prints a table (val acc, V, mean sec/epoch) and the recommended default beta.
 Run outputs land in runs/sweep-<ts>/.
+
+Note on diversity_feature="plasticity_signature":
+  The per-synapse feature uses compressed rows h_i * ||eps|| which carry a
+  ~sqrt(fan_in)*T larger natural scale than the 0/1 spike rows. On MNIST
+  (784 inputs, T=25) this makes K entries roughly 3000x larger, so the
+  spike-tuned beta=3e-3 drives h toward zero and collapses training to
+  chance. A follow-up sweep found the plasticity sweet spot at beta ~ 1e-6
+  (val 0.9056) -- still below the spike winner (val 0.9218 at beta=3e-3)
+  for 3-epoch MNIST, so spike + beta=3e-3 is kept as the default.
+  Rule of thumb: for plasticity_signature, divide the spike-tuned beta by
+  ~sqrt(fan_in)*T (or sweep beta in [1e-7, 1e-5] separately).
 """
 from __future__ import annotations
 
