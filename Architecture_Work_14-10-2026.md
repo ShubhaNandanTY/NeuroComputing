@@ -59,46 +59,46 @@ One window = one mini-batch presented for T = 25 steps (proposal §11).
 
 ## 3. File map
 
-Status: ✅ done and tested · 🟡 stub with spec + acceptance tests (yours to finish)
+Status: `[done]` implemented and tested; `[todo]` stub with spec and acceptance tests (yours to finish)
 
 ```
 neuron-games/
 ├── src/neuron_games/
-│   ├── config.py              ✅ conditions, presets, every Φ hyperparameter
-│   ├── model.py               ✅ LIF network; records ε, h; neuron masks
-│   ├── encoding.py            ✅ rate / direct input encoding
-│   ├── state.py               ✅ game state x = (W,U,S,E,Z), reward, previous ΔW
-│   ├── learning_rule.py       ✅ three-factor rule (LayerSignals → dC/dW)
-│   ├── game.py                ✅ one adaptation window (§11)
-│   ├── train.py               ✅ epochs, logging, checkpoints (BPTT + three-factor)
-│   ├── eval.py / runner.py    ✅ evaluation, results.json, energy meter
-│   ├── __main__.py            ✅ CLI: train / eval / explain
+│   ├── config.py              [done] conditions, presets, every Φ hyperparameter
+│   ├── model.py               [done] LIF network; records ε, h; neuron masks
+│   ├── encoding.py            [done] rate / direct input encoding
+│   ├── state.py               [done] game state x = (W,U,S,E,Z), reward, previous ΔW
+│   ├── learning_rule.py       [done] three-factor rule (LayerSignals → dC/dW)
+│   ├── game.py                [done] one adaptation window (§11)
+│   ├── train.py               [done] epochs, logging, checkpoints (BPTT + three-factor)
+│   ├── eval.py / runner.py    [done] evaluation, results.json, energy meter
+│   ├── __main__.py            [done] CLI: train / eval / explain
 │   ├── potential/
-│   │   ├── base.py            ✅ TermContext / TermOutput contract, signals_from_autograd
-│   │   ├── task.py            ✅ J and closed-form output error
-│   │   ├── potential.py       ✅ composes terms into C and Φ
-│   │   ├── diversity.py       🟡 V                         — Deyvik
-│   │   ├── metabolic.py       🟡 E_met                     — Joohyun
-│   │   ├── barrier.py         🟡 E_bar + projection         — Joohyun
-│   │   └── regularizer.py     🟡 R                         — Joohyun
+│   │   ├── base.py            [done] TermContext / TermOutput contract, signals_from_autograd
+│   │   ├── task.py            [done] J and closed-form output error
+│   │   ├── potential.py       [done] composes terms into C and Φ
+│   │   ├── diversity.py       [todo] V                         — Deyvik
+│   │   ├── metabolic.py       [todo] E_met                     — Joohyun
+│   │   ├── barrier.py         [todo] E_bar + projection         — Joohyun
+│   │   └── regularizer.py     [todo] R                         — Joohyun
 │   ├── modulator/
-│   │   ├── random_feedback.py ✅ fixed random feedback broadcast
-│   │   ├── base.py            ✅ CreditContext / CreditResult contract
-│   │   ├── eligibility_shapley.py 🟡 φ_i and gains          — William
-│   │   └── shapley_taylor.py  🟡 order-2 credit (stretch)   — William
+│   │   ├── random_feedback.py [done] fixed random feedback broadcast
+│   │   ├── base.py            [done] CreditContext / CreditResult contract
+│   │   ├── eligibility_shapley.py [todo] φ_i and gains          — William
+│   │   └── shapley_taylor.py  [todo] order-2 credit (stretch)   — William
 │   └── explain/
-│       ├── attribution.py     🟡 credit loading, masks      — William
-│       ├── metrics.py         🟡 faithfulness, stability, sparsity — William
-│       └── report.py          🟡 `explain` command          — William
+│       ├── attribution.py     [todo] credit loading, masks      — William
+│       ├── metrics.py         [todo] faithfulness, stability, sparsity — William
+│       └── report.py          [todo] `explain` command          — William
 ├── scripts/
-│   ├── run_ablation.sh        🟡 runs the grid              — Joohyun
-│   └── aggregate.py           🟡 summary table + plot       — Deyvik
+│   ├── run_ablation.sh        [todo] runs the grid              — Joohyun
+│   └── aggregate.py           [todo] summary table + plot       — Deyvik
 └── tests/
-    ├── test_model.py          ✅ LIF cell, network, encodings
-    ├── test_learning_rule.py  ✅ eligibility exactness, signals, game step, learning
-    ├── test_diversity.py      🟡 acceptance tests           — Deyvik
-    ├── test_homeostasis.py    🟡 acceptance tests           — Joohyun
-    └── test_credit.py         🟡 acceptance tests           — William
+    ├── test_model.py          [done] LIF cell, network, encodings
+    ├── test_learning_rule.py  [done] eligibility exactness, signals, game step, learning
+    ├── test_diversity.py      [todo] acceptance tests           — Deyvik
+    ├── test_homeostasis.py    [todo] acceptance tests           — Joohyun
+    └── test_credit.py         [todo] acceptance tests           — William
 ```
 
 `snn-surrogate-baseline/` is imported for data loaders, seeding, the NVML
@@ -109,7 +109,7 @@ Do not copy those; import them.
 
 | Condition | Row | Adds | Runs today? |
 |---|---|---|---|
-| `three_factor` | 4 | three-factor rule + random feedback | ✅ yes |
+| `three_factor` | 4 | three-factor rule + random feedback | yes |
 | `tf_div` | 5 | + V (DPP log-det) | after Deyvik |
 | `tf_div_energy` | 6 | + E_met + quadratic barrier | after Deyvik + Joohyun |
 | `ng_full` | 7 | + Eligibility-Shapley modulation | after all three |
@@ -168,7 +168,7 @@ logged (post-hoc only). Per-epoch mean φ per neuron is saved in
 ### 4.3 Rules for everyone
 
 - Work on your own branch (`ng/<name>`), open a PR into `main`.
-- Do not change the core files (✅ above) or the contracts without telling the
+- Do not change the core files (marked `[done]` above) or the contracts without telling the
   other two first: the other parts are written against them.
 - Before opening the PR: `cd neuron-games && python -m pytest tests -v`
   must pass with **none of your tests skipped**.
