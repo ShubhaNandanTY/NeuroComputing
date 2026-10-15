@@ -64,11 +64,11 @@ def _fmt_beta(b: float | None) -> str:
 
 
 def _print_row(r: dict, baseline_s: float | None) -> None:
-    overhead = f"{(r['mean_epoch_s'] - baseline_s) / baseline_s * 100:+.0f}%" if baseline_s else "—"
+    overhead = f"{(r['mean_epoch_s'] - baseline_s) / baseline_s * 100:+.0f}%" if baseline_s else "-"
     V = "n/a" if r["V_final"] is None else f"{r['V_final']:+.4f}"
     beta_s = _fmt_beta(r["beta"])
     print(f"  {r['name']:<18} val={r['best_val_acc']:.4f}  test={r['test_acc']:.4f}  "
-          f"β={beta_s:>6}  V={V:>9}  s/epoch={r['mean_epoch_s']:.1f} ({overhead:>5})  "
+          f"beta={beta_s:>6}  V={V:>9}  s/epoch={r['mean_epoch_s']:.1f} ({overhead:>5})  "
           f"h={r['hidden_rate']:.3f}")
 
 
