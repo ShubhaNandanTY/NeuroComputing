@@ -25,48 +25,82 @@ def feature_objects(ctx: TermContext, l: int, spk: torch.Tensor,
                     mem: torch.Tensor) -> torch.Tensor:
     """Feature object tau_i for every neuron i of layer l, as rows of [N_l, D].
 
-    spk, mem: [T, B, N_l] leaf tensors for layer l (differentiable).
+    spk, mem: [T, B, N_l] leaf tensors (differentiable) for layer l.
 
-    cfg.diversity_feature == "spike" (eq. 10): tau_i = (kappa * s_i)(t).
-        Permute to [N_l, B, T]; for kernels mci / vanrossum / schoenberg
-        smooth along time with smooth_exp(x, cfg.diversity_tau); flatten to
-        [N_l, B*T]. Same construction as neuron_baseline/train.py
-        `_diversity_term`, minus the conv reshape.
+    cfg.diversity_feature == "spike" (eq. 10):
+        Permute [T,B,N] -> [N,B,T]; for mci / vanrossum / schoenberg smooth
+        along time with smooth_exp(x, cfg.diversity_tau); flatten to [N, B*T].
 
-    cfg.diversity_feature == "plasticity_signature" (eq. 11): tau_i = {e_ij}_j
-        with e_ij[t] = h_i[t] * eps_j[t]. Do NOT materialize [N_l, B*T*fan_in].
-        For a linear kernel, <tau_i, tau_k> = sum_{t,b} h_i h_k ||eps[t,b]||^2,
-        so return rows h_i[t,b] * ||eps[t,b]||, flattened to [N_l, B*T], where
-        h = fast_sigmoid_grad(mem - threshold, surrogate_slope) (computed from
-        the *leaf* `mem` so the signal reaches u) and eps = ctx.rec.eps[l]
-        (presynaptic; treat as a constant). Document in the docstring which
-        kernels this shortcut is valid for (linear ones); for schoenberg the
-        same rows give the exact RKHS distance as well, since it only needs
-        inner products.
+    cfg.diversity_feature == "plasticity_signature" (eq. 11):
+        Full feature tau_i has entries e_ij[t,b] = h_i[t,b] * eps_j[t,b] and
+        would be shape [N, T*B*fan_in]. We never build it. The identity
+            <tau_i, tau_k> = sum_{t,b} h_i h_k * ||eps[t,b]||^2
+        means the compressed row r_i[t,b] = h_i[t,b] * ||eps[t,b]|| gives the
+        same Gram matrix as the full tensor. Valid for linear kernels
+        (binned / mci / vanrossum, i.e. inner-product kernels) and for
+        schoenberg (RBF), since the RBF only depends on pairwise distances
+        and ||tau_i - tau_k|| = ||r_i - r_k||. Not valid for count on these
+        rows (it would sum h*||eps|| over time, which has no spike-count
+        interpretation).
+
+        h is computed from the leaf mem with fast_sigmoid_grad so the signal
+        reaches u; eps = ctx.rec.eps[l] is treated as constant (presynaptic).
     """
-    raise NotImplementedError("Deyvik: feature_objects (diversity.py)")
+    cfg = ctx.cfg
+    T, B, N = spk.shape
+
+    if cfg.diversity_feature == "spike":
+        rows = spk.permute(2, 1, 0)  # [N, B, T]
+        if cfg.diversity_kernel in ("mci", "vanrossum", "schoenberg"):
+            rows = smooth_exp(rows, tau=cfg.diversity_tau, axis=-1)
+        return rows.reshape(N, B * T)
+
+    if cfg.diversity_feature == "plasticity_signature":
+        eps = ctx.rec.eps[l].detach()                        # [T, B, fan_in]
+        eps_norm = eps.pow(2).sum(dim=-1).sqrt()             # [T, B]
+        h = fast_sigmoid_grad(mem - cfg.threshold, cfg.surrogate_slope)  # [T, B, N]
+        rows = h * eps_norm.unsqueeze(-1)                    # [T, B, N]
+        return rows.permute(2, 0, 1).reshape(N, T * B)
+
+    raise ValueError(f"unknown diversity_feature {cfg.diversity_feature!r}")
 
 
 def kernel_offdiag_value(K: torch.Tensor) -> torch.Tensor:
-    """V_kernel = -R_l, R_l = sum_{i != j} K_ij (eq. 12-13), for one layer.
+    """V_kernel = -R_l, R_l = sum_{i != j} K_ij / (N (N - 1)) (eq. 12-13).
 
-    Normalize by N_l * (N_l - 1) like neuron_baseline.kernels.pairwise_diversity_loss
-    so beta does not have to change with layer width. Return the *reward*
-    (negative redundancy).
+    Reward form (negative redundancy); normalized so beta does not have to
+    change with layer width. Returns 0 when N < 2.
     """
-    raise NotImplementedError("Deyvik: kernel_offdiag_value (diversity.py)")
+    if K.dim() != 2 or K.shape[0] != K.shape[1]:
+        raise ValueError(f"K must be [N, N], got {tuple(K.shape)}")
+    N = K.shape[0]
+    if N < 2:
+        return K.new_zeros(())
+    off_diag = K.sum() - K.diagonal().sum()
+    return -off_diag / (N * (N - 1))
 
 
 def dpp_logdet_value(K: torch.Tensor, eps_scale: float) -> torch.Tensor:
-    """V_DPP = log det(K + eps I) for one layer (eq. 14).
+    """V_DPP = log det(K_n + eps_scale * I) for one layer (eq. 14).
 
-    Required normalization (the tests assume it): K_n = K / mean(diag K), so
-    the log-det cannot be raised just by making every neuron fire more; then
-    V = log det(K_n + eps_scale * I). Use torch.linalg.cholesky_ex; if
-    info != 0 retry once with 10x eps_scale, then raise. log det =
-    2 * sum(log(diag(L))). Return a differentiable scalar.
+    K_n = K / mean(diag K) stops the log-det from being raised just by making
+    every neuron fire more. Factorization uses torch.linalg.cholesky_ex; on
+    failure (info != 0) we retry once with 10x eps_scale, then raise.
+    Returned as a differentiable scalar: 2 * sum(log(diag(L))).
     """
-    raise NotImplementedError("Deyvik: dpp_logdet_value (diversity.py)")
+    if K.dim() != 2 or K.shape[0] != K.shape[1]:
+        raise ValueError(f"K must be [N, N], got {tuple(K.shape)}")
+    N = K.shape[0]
+    K_n = K / K.diagonal().mean()
+    eye = torch.eye(N, device=K.device, dtype=K.dtype)
+    L, info = torch.linalg.cholesky_ex(K_n + eps_scale * eye)
+    if int(info) != 0:
+        L, info = torch.linalg.cholesky_ex(K_n + (10.0 * eps_scale) * eye)
+        if int(info) != 0:
+            raise RuntimeError(
+                f"dpp_logdet: Cholesky failed at eps={eps_scale} and 10x retry; info={int(info)}"
+            )
+    return 2.0 * torch.log(L.diagonal()).sum()
 
 
 def mmd_value(K: torch.Tensor) -> torch.Tensor:
