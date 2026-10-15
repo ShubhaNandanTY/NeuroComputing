@@ -1,8 +1,15 @@
 """Run configuration for Neuron Games experiments.
 
 One `NGRunConfig` describes one row of the ablation grid
-(docs/implementation-plan.md §5). Only Row 2 (`bp_anchor`) exists so far.
-Serialized next to every run, like the baseline's `Config`.
+(docs/implementation-plan.md §5, proposal §12.3). Serialized next to every
+run, like the baseline's `Config`.
+
+Build configs with `NGRunConfig.for_condition(name, **overrides)`: the
+condition preset fills the learning rule and potential terms, then explicit
+overrides win. Constructing `NGRunConfig(...)` directly skips the preset.
+
+Potential (proposal eq. 8):  Phi = -J + beta * V - mu * E - lam * R
+The trainer minimizes the cost C = -Phi = J - beta*V + mu*E + lam*R.
 """
 from __future__ import annotations
 
@@ -15,8 +22,38 @@ from typing import Any
 
 # condition name -> ablation row in implementation-plan.md §5
 CONDITIONS: dict[str, int] = {
-    "bp_anchor": 2,
+    "bp_anchor": 2,        # surrogate-gradient BPTT reference (same network)
+    "three_factor": 4,     # three-factor rule, random-feedback signal, no V/E/R
+    "tf_div": 5,           # + diversity V
+    "tf_div_energy": 6,    # + metabolic/barrier energy E
+    "ng_full": 7,          # + Eligibility-Shapley credit modulation (the headline)
+    "ng_full_st2": 8,      # Row 7*: Shapley-Taylor order-2 credit, log-barrier
 }
+
+# Fields each condition sets. Anything not listed keeps the dataclass default.
+_THREE_FACTOR = {"learning_rule": "three_factor", "optimizer": "sgd", "lr": 2.0}
+CONDITION_PRESETS: dict[str, dict[str, Any]] = {
+    "bp_anchor": {"learning_rule": "bptt", "optimizer": "adam", "lr": 1e-3},
+    "three_factor": {**_THREE_FACTOR},
+    "tf_div": {**_THREE_FACTOR, "diversity": "dpp_logdet"},
+    "tf_div_energy": {**_THREE_FACTOR, "diversity": "dpp_logdet",
+                      "metabolic": "basic", "barrier": "quadratic"},
+    "ng_full": {**_THREE_FACTOR, "diversity": "dpp_logdet",
+                "metabolic": "basic", "barrier": "quadratic",
+                "credit": "eligibility_shapley", "credit_modulates": True},
+    "ng_full_st2": {**_THREE_FACTOR, "diversity": "dpp_logdet",
+                    "metabolic": "basic", "barrier": "log",
+                    "credit": "shapley_taylor", "credit_modulates": True},
+}
+
+LEARNING_RULES = ("bptt", "three_factor")
+OPTIMIZERS = ("sgd", "adam")
+DIVERSITY = ("none", "kernel_offdiag", "dpp_logdet", "mmd")
+DIVERSITY_FEATURES = ("spike", "plasticity_signature")
+DIVERSITY_KERNELS = ("mci", "vanrossum", "binned", "count", "schoenberg")
+METABOLIC = ("none", "basic")
+BARRIERS = ("none", "quadratic", "log")
+CREDIT = ("none", "eligibility_shapley", "shapley_taylor")
 
 
 @dataclass
@@ -32,14 +69,57 @@ class NGRunConfig:
     surrogate_slope: float = 25.0         # fast-sigmoid k
     bias: bool = False                    # every trainable parameter is a synapse w_ij
 
-    # --- Input / task ---
+    # --- Input / task (J) ---
     dataset: str = "MNIST"
-    num_steps: int = 25                   # T
+    num_steps: int = 25                   # T: one adaptation window = one presentation
     encoding: str = "rate"                # rate (Bernoulli) | direct (same pixels each step)
     task_loss: str = "ce_rate"            # ce_rate (mean_t CE on spk[t]) | ce_count (CE on spike counts)
 
+    # --- Learning rule ---
+    learning_rule: str = "bptt"           # bptt (Row 2) | three_factor (Rows 4-7*)
+    feedback_scale: float = 1.0           # scale of the fixed random feedback matrices B
+    feedback_seed_offset: int = 7919      # B is drawn from seed + offset, independent of W init
+
+    # --- V: diversity (proposal §5) ---
+    diversity: str = "none"               # none | kernel_offdiag | dpp_logdet | mmd
+    diversity_feature: str = "spike"      # spike (eq. 10) | plasticity_signature (eq. 11)
+    diversity_kernel: str = "mci"         # kernel on the feature objects (neuron_baseline.kernels)
+    diversity_tau: float = 5.0            # smoothing time constant for mci / vanrossum / schoenberg
+    diversity_sigma: float = 1.0          # schoenberg bandwidth
+    dpp_eps_scale: float = 1e-4           # jitter eps = dpp_eps_scale * mean(diag K)
+    beta: float = 1e-3
+
+    # --- E: metabolic + barrier homeostasis (proposal §6) ---
+    metabolic: str = "none"               # none | basic (eq. 15)
+    c_s: float = 1e-3                     # per-spike cost
+    c_u: float = 1e-3                     # membrane^2 cost
+    c_w: float = 1e-4                     # synaptic maintenance cost
+    p_w: float = 2.0                      # exponent p in |w|^p
+    barrier: str = "none"                 # none | quadratic (penalty + projection) | log (eq. 17)
+    alpha_bar: float = 1e-2               # alpha in E = E_met + alpha * E_bar (eq. 18)
+    w_min: float = -1.0
+    w_max: float = 1.0
+    u_min: float = -2.0
+    u_max: float = 2.0
+    barrier_t0: float = 1.0               # log-barrier extension: t = t0 * barrier_mu ** epoch
+    barrier_mu: float = 1.5
+    mu: float = 1e-4
+
+    # --- R: conventional weight regularizer ---
+    lam: float = 0.0
+
+    # --- Credit: Eligibility-Shapley (proposal §8) ---
+    credit: str = "none"                  # none | eligibility_shapley | shapley_taylor
+    credit_modulates: bool = False        # True: gains scale the learning signal (eq. 23); False: post-hoc only
+    credit_layers: str = "hidden"         # hidden | all
+
+    # --- Homeostatic state Z ---
+    rate_ema: float = 0.99                # running per-neuron firing-rate EMA kept in Z
+
     # --- Optimization ---
+    optimizer: str = "adam"               # sgd matches eq. 3 (dW = eta * int m e dt); adam for BPTT
     lr: float = 1e-3
+    momentum: float = 0.0                 # sgd only
     adam_betas: tuple[float, float] = (0.9, 0.999)
     epochs: int = 1
     batch_size: int = 128
@@ -58,12 +138,36 @@ class NGRunConfig:
     fingerprint: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        def _check(name: str, value: str, allowed: tuple[str, ...]) -> None:
+            if value not in allowed:
+                raise ValueError(f"unknown {name} {value!r}; known: {list(allowed)}")
+
         if self.condition not in CONDITIONS:
             raise ValueError(f"unknown condition {self.condition!r}; known: {sorted(CONDITIONS)}")
-        if self.encoding not in ("rate", "direct"):
-            raise ValueError(f"unknown encoding {self.encoding!r}")
-        if self.task_loss not in ("ce_rate", "ce_count"):
-            raise ValueError(f"unknown task_loss {self.task_loss!r}")
+        _check("encoding", self.encoding, ("rate", "direct"))
+        _check("task_loss", self.task_loss, ("ce_rate", "ce_count"))
+        _check("learning_rule", self.learning_rule, LEARNING_RULES)
+        _check("optimizer", self.optimizer, OPTIMIZERS)
+        _check("diversity", self.diversity, DIVERSITY)
+        _check("diversity_feature", self.diversity_feature, DIVERSITY_FEATURES)
+        _check("diversity_kernel", self.diversity_kernel, DIVERSITY_KERNELS)
+        _check("metabolic", self.metabolic, METABOLIC)
+        _check("barrier", self.barrier, BARRIERS)
+        _check("credit", self.credit, CREDIT)
+        _check("credit_layers", self.credit_layers, ("hidden", "all"))
+        if self.learning_rule == "three_factor" and self.bias:
+            raise ValueError("three_factor assumes bias=False: every parameter is a synapse w_ij")
+        if self.learning_rule == "bptt" and (self.diversity != "none" or self.metabolic != "none"
+                                             or self.barrier != "none" or self.credit != "none"):
+            raise ValueError("V / E / credit terms are only wired into the three_factor rule")
+        if self.credit_modulates and self.credit == "none":
+            raise ValueError("credit_modulates=True needs a credit method")
+
+    @classmethod
+    def for_condition(cls, condition: str, **overrides: Any) -> "NGRunConfig":
+        if condition not in CONDITION_PRESETS:
+            raise ValueError(f"unknown condition {condition!r}; known: {sorted(CONDITIONS)}")
+        return cls(**{"condition": condition, **CONDITION_PRESETS[condition], **overrides})
 
     @property
     def row(self) -> int:

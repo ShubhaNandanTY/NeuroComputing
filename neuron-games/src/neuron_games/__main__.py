@@ -1,6 +1,8 @@
 """CLI entrypoint. Run from `neuron-games/` with `src` on the path:
 
     PYTHONPATH=src python -m neuron_games train --condition bp_anchor --seed 1
+    PYTHONPATH=src python -m neuron_games train --condition three_factor --device mps
+    PYTHONPATH=src python -m neuron_games train --condition ng_full --beta 1e-3 --mu 1e-4
     PYTHONPATH=src python -m neuron_games train --device mps --epochs 5
     PYTHONPATH=src python -m neuron_games eval --ckpt runs/bp_anchor/<ts>/checkpoints/best.pt
 """
@@ -12,7 +14,8 @@ import sys
 from dataclasses import fields
 from pathlib import Path
 
-from .config import CONDITIONS, NGRunConfig
+from .config import (BARRIERS, CONDITIONS, CREDIT, DIVERSITY, DIVERSITY_FEATURES,
+                     DIVERSITY_KERNELS, LEARNING_RULES, METABOLIC, OPTIMIZERS, NGRunConfig)
 
 
 def _add_config_overrides(p: argparse.ArgumentParser) -> None:
@@ -28,6 +31,29 @@ def _add_config_overrides(p: argparse.ArgumentParser) -> None:
     p.add_argument("--threshold", type=float)
     p.add_argument("--surrogate-slope", dest="surrogate_slope", type=float)
     p.add_argument("--lr", type=float)
+    p.add_argument("--optimizer", choices=list(OPTIMIZERS))
+    p.add_argument("--momentum", type=float)
+    p.add_argument("--learning-rule", dest="learning_rule", choices=list(LEARNING_RULES))
+    p.add_argument("--feedback-scale", dest="feedback_scale", type=float)
+    # V
+    p.add_argument("--diversity", choices=list(DIVERSITY))
+    p.add_argument("--diversity-feature", dest="diversity_feature", choices=list(DIVERSITY_FEATURES))
+    p.add_argument("--diversity-kernel", dest="diversity_kernel", choices=list(DIVERSITY_KERNELS))
+    p.add_argument("--diversity-tau", dest="diversity_tau", type=float)
+    p.add_argument("--diversity-sigma", dest="diversity_sigma", type=float)
+    p.add_argument("--beta", type=float)
+    # E
+    p.add_argument("--metabolic", choices=list(METABOLIC))
+    p.add_argument("--barrier", choices=list(BARRIERS))
+    p.add_argument("--mu", type=float)
+    p.add_argument("--alpha-bar", dest="alpha_bar", type=float)
+    # R
+    p.add_argument("--lam", type=float)
+    # credit
+    p.add_argument("--credit", choices=list(CREDIT))
+    p.add_argument("--credit-modulates", dest="credit_modulates",
+                   action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--credit-layers", dest="credit_layers", choices=["hidden", "all"])
     p.add_argument("--seed", type=int)
     p.add_argument("--val-size", dest="val_size", type=int)
     p.add_argument("--data-dir", dest="data_dir")
@@ -38,8 +64,8 @@ def _add_config_overrides(p: argparse.ArgumentParser) -> None:
 
 def _cfg_from_args(args: argparse.Namespace) -> NGRunConfig:
     overrides = {f.name: getattr(args, f.name) for f in fields(NGRunConfig)
-                 if getattr(args, f.name, None) is not None}
-    return NGRunConfig(**overrides)
+                 if f.name != "condition" and getattr(args, f.name, None) is not None}
+    return NGRunConfig.for_condition(args.condition or "bp_anchor", **overrides)
 
 
 def cmd_train(args: argparse.Namespace) -> int:
@@ -76,6 +102,12 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_explain(args: argparse.Namespace) -> int:
+    from .explain.report import run_report
+    print(json.dumps(run_report(args.run, device=args.device), indent=2, default=str))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="neuron_games",
                                 description="Neuron Games: potential-game SNN training")
@@ -89,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
     p_eval.add_argument("--ckpt", required=True)
     p_eval.add_argument("--device", help="override the device stored in the checkpoint")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_explain = sub.add_parser("explain", help="explainability report for a finished run")
+    p_explain.add_argument("--run", required=True, help="run directory (runs/<condition>/<ts>)")
+    p_explain.add_argument("--device", default="cpu")
+    p_explain.set_defaults(func=cmd_explain)
 
     args = p.parse_args(argv)
     return args.func(args)

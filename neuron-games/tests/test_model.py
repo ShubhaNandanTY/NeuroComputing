@@ -195,4 +195,4 @@ def test_config_round_trip(tmp_path) -> None:
 
 def test_config_rejects_unknown_condition() -> None:
     with pytest.raises(ValueError):
-        NGRunConfig(condition="ng_full")
+        NGRunConfig(condition="not_a_condition")

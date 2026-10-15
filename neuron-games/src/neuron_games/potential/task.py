@@ -39,3 +39,25 @@ def task_loss(kind: str):
 
 def spike_count_predictions(spk: torch.Tensor) -> torch.Tensor:
     return spk.sum(dim=0).argmax(dim=1)
+
+
+def output_error(kind: str, spk: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """dJ/ds_out[t] in closed form, [T, B, C]: the output layer's learning signal.
+
+    ce_rate:  J = (1/T) sum_t mean_b CE(spk[t], y)
+              dJ/dspk[t, b] = (softmax(spk[t, b]) - onehot(y_b)) / (T * B)
+    ce_count: J = mean_b CE(sum_t spk[t], y)
+              dJ/dspk[t, b] = (softmax(count_b) - onehot(y_b)) / B    for every t
+
+    This is the third factor of the proposal (§7.2) before broadcast: a
+    quantity available at the output neurons, computed without any backward
+    pass. tests/test_learning_rule.py checks it against autograd.
+    """
+    T, B, C = spk.shape
+    onehot = F.one_hot(targets, C).to(spk.dtype)
+    if kind == "ce_rate":
+        return (torch.softmax(spk, dim=-1) - onehot) / (T * B)
+    if kind == "ce_count":
+        err = (torch.softmax(spk.sum(dim=0), dim=-1) - onehot) / B
+        return err.unsqueeze(0).expand(T, B, C)
+    raise ValueError(f"unknown task_loss {kind!r}; known: {sorted(TASK_LOSSES)}")

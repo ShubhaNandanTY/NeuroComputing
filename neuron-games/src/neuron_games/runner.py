@@ -98,7 +98,11 @@ def run_training(cfg: NGRunConfig, run_dir: Path | None = None, verbose: bool = 
         "meta": {
             "condition": cfg.condition,
             "row": cfg.row,
-            "learning_rule": "bptt_surrogate",
+            "learning_rule": cfg.learning_rule,
+            "potential": {"diversity": cfg.diversity, "diversity_feature": cfg.diversity_feature,
+                          "metabolic": cfg.metabolic, "barrier": cfg.barrier,
+                          "credit": cfg.credit, "credit_modulates": cfg.credit_modulates,
+                          "beta": cfg.beta, "mu": cfg.mu, "lam": cfg.lam},
             "arch": f"fc-{cfg.n_in}-{cfg.n_hidden}-{cfg.n_out}",
             "best_epoch": ckpt["epoch"],
         },

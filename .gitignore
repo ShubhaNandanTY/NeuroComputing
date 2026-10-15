@@ -9,6 +9,7 @@ snn-surrogate-baseline/data/
 **/results/*
 !**/results/.gitkeep
 snn-surrogate-baseline/runs/
+neuron-games/runs/
 
 # Local virtualenvs (per sub-project)
 **/.venv/

@@ -117,6 +117,7 @@ the diversity and homeostasis mechanisms above. Note the site is http-only.
 | `data/processed/` | Derived datasets produced by code in `src/` |
 | `notebooks/` | Exploratory analysis |
 | `src/neuron_games/` | Neuron Games framework (see below) |
+| `scripts/` | Ablation driver and results aggregation |
 | `tests/` | pytest unit tests |
 | `runs/` | Per-run outputs (git-ignored) |
 | `results/` | Figures, tables, model outputs |
@@ -136,6 +137,10 @@ All commands run from `neuron-games/`:
 | --- | --- |
 | Unit tests | `python -m pytest tests -v` |
 | Row 2 (BP anchor), 1 epoch | `PYTHONPATH=src python -m neuron_games train --condition bp_anchor` |
+| Row 4 (three-factor, no backprop) | `PYTHONPATH=src python -m neuron_games train --condition three_factor` |
+| Row 7 (full Neuron Games) | `PYTHONPATH=src python -m neuron_games train --condition ng_full` |
+| Term overrides | `... --condition ng_full --beta 1e-3 --mu 1e-4 --diversity kernel_offdiag --no-credit-modulates` |
+| Explainability report | `PYTHONPATH=src python -m neuron_games explain --run runs/ng_full/<ts>` |
 | Overrides | `PYTHONPATH=src python -m neuron_games train --epochs 5 --seed 42 --device cpu` |
 | Evaluate a checkpoint | `PYTHONPATH=src python -m neuron_games eval --ckpt runs/bp_anchor/<ts>/checkpoints/best.pt` |
 
@@ -159,8 +164,25 @@ explicitly elsewhere. Each run writes `runs/<condition>/<ts>/` with
   learning signal e-prop broadcasts; `ce_count` (plan §2.1's original default)
   is selectable with `--task-loss ce_count`.
 
-Not yet: eligibility traces, three-factor rule (Row 4), V / E / R terms,
-modulators. Those follow implementation-plan Workstreams A–D.
+### What exists (2026-10-14): the no-backprop Neuron Games pipeline
+
+The full module layout, who owns which file, and what is left to do are in
+[`../Architecture_Work_14-10-2026.md`](../Architecture_Work_14-10-2026.md).
+In short:
+
+- **Done and tested:** eligibility recording in the forward pass
+  (`model.py`), the three-factor rule (`learning_rule.py`), the windowed game
+  step (`game.py`, proposal §11), game state and reward (`state.py`),
+  random-feedback broadcast (`modulator/random_feedback.py`), the potential
+  term contract and composer (`potential/base.py`, `potential/potential.py`),
+  conditions / presets / CLI, and the training loop.
+  `--condition three_factor` trains end to end on MNIST with no backward
+  pass through the network (3 epochs, CPU: 91.8% test).
+- **Stubs with specs and acceptance tests:** V (`potential/diversity.py`),
+  E and R (`potential/metabolic.py`, `barrier.py`, `regularizer.py`),
+  Eligibility-Shapley and Shapley-Taylor (`modulator/`), post-hoc
+  explainability (`explain/`), `scripts/`. Their tests skip until the stub
+  stops raising `NotImplementedError`.
 
 ## Log
 
@@ -170,3 +192,7 @@ modulators. Those follow implementation-plan Workstreams A–D.
 - 2026-10-08 — `src/neuron_games/`: vendored LIF cell, 784-128-10 FC SNN, and the
   Row 2 BPTT anchor on that architecture (the existing baseline is a Conv-SNN,
   so Row 2 vs Row 4 needs its own FC anchor).
+- 2026-10-14 — Merged to `main`. Three-factor Neuron Games core (eligibility
+  traces, learning rule, game step, potential contract, random feedback,
+  conditions for Rows 4–7*); scaffolding for V / E / R / credit /
+  explainability / ablation split across the team.
