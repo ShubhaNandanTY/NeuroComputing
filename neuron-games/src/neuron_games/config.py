@@ -87,7 +87,7 @@ class NGRunConfig:
     diversity_tau: float = 5.0            # smoothing time constant for mci / vanrossum / schoenberg
     diversity_sigma: float = 1.0          # schoenberg bandwidth
     dpp_eps_scale: float = 1e-4           # jitter eps = dpp_eps_scale * mean(diag K)
-    beta: float = 1e-3
+    beta: float = 3e-3                    # picked by scripts/beta_sweep.py; see sweep notes
 
     # --- E: metabolic + barrier homeostasis (proposal §6) ---
     metabolic: str = "none"               # none | basic (eq. 15)
